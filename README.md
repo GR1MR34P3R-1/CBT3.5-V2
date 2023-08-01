@@ -48,7 +48,7 @@ python3 main.py
 
 ## Customization 🎨
 
-- You can customize CBT3.5's behavior by modifying the code in the bot.py file. Feel free to experiment and add new features!
+- You can customize CBT3.5's behavior by modifying the code in the main.py file. Feel free to experiment and add new features!
 
 ## Logging and Exporting 📝
 
