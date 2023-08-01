@@ -13,7 +13,7 @@ Welcome to **CBT3.5-V2**, the ultimate ChatBot powered by GPT-3.5 Turbo! 🤖
 
 Before running CBT3.5, make sure you have the following dependencies installed:
 
-- `discord.py` (version 1.7.3 or later)
+- `discord` (version 1.7.3 or later)
 - `openai` (version 0.27.0 or later)
 - `pytz` (version 2021.1 or later)
 - `sqlite3`
