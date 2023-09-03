@@ -6,16 +6,61 @@ import asyncio
 import sqlite3
 import pytz
 from datetime import datetime
+import logging
+import sys
+import signal
+
+# Custom exceptions
+class BotInitializationError(Exception):
+    pass
+
+class DatabaseError(Exception):
+    pass
+
+class OpenAIError(Exception):
+    pass
+
+class DiscordError(Exception):
+    pass
+
+class RateLimitError(Exception):
+    pass
+
+# Centralized logging
+logging.basicConfig(level=logging.INFO)
+bot_logger = logging.getLogger('bot')
+db_logger = logging.getLogger('database')
+openai_logger = logging.getLogger('openai')
+
+# Configure log levels
+db_logger.setLevel(logging.ERROR)
+openai_logger.setLevel(logging.ERROR)
+
+file_handler = logging.FileHandler('bot.log')
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+
+bot_logger.addHandler(file_handler)
+db_logger.addHandler(file_handler)
+openai_logger.addHandler(file_handler)
+
+# Signal handler for graceful shutdown
+def signal_handler(sig, frame):
+    bot_logger.info("Received termination signal. Shutting down...")
+    db_connection.close()
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 # Read config.ini
 config = configparser.ConfigParser()
 config.read('config.ini')
 
 token = config['Bot']['token']
-api_key = config['Bot']['api_key']  # Read API key from the [Bot] section
+api_key = config['Bot']['api_key']
 cleanup_duration = int(config['Bot']['cleanup_duration'])
 
-# Create an instance of the commands.Bot class
 intents = discord.Intents.default()
 intents.typing = False
 intents.presences = False
@@ -24,51 +69,61 @@ intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Initialize the OpenAI API
-openai.api_key = api_key
+try:
+    openai.api_key = api_key
+except openai.error.OpenAIError as openai_error:
+    openai_logger.error(f"OpenAI API initialization error: {str(openai_error)}")
+    raise OpenAIError("OpenAI API initialization failed.") from openai_error
 
 # Create a connection to the database
-db_connection = sqlite3.connect('database.db')
+try:
+    db_connection = sqlite3.connect('database.db')
+except sqlite3.Error as db_error:
+    db_logger.error(f"Database connection error: {str(db_error)}")
+    raise DatabaseError("Database connection failed.") from db_error
 
 # Create a cursor object to execute SQL queries
 db_cursor = db_connection.cursor()
 
 # Create the tables if they don't exist
-db_cursor.execute('''
-    CREATE TABLE IF NOT EXISTS channel_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        channel_id INTEGER,
-        channel_name TEXT,
-        guild_id INTEGER,
-        guild_name TEXT,
-        author_id INTEGER,
-        author_name TEXT,
-        content TEXT,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-''')
+try:
+    db_cursor.execute('''
+        CREATE TABLE IF NOT EXISTS channel_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id INTEGER,
+            channel_name TEXT,
+            guild_id INTEGER,
+            guild_name TEXT,
+            author_id INTEGER,
+            author_name TEXT,
+            content TEXT,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
 
-db_cursor.execute('''
-    CREATE TABLE IF NOT EXISTS command_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        guild_id INTEGER,
-        guild_name TEXT,
-        channel_id INTEGER,
-        channel_name TEXT,
-        author_id INTEGER,
-        author_name TEXT,
-        command TEXT,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-''')
+    db_cursor.execute('''
+        CREATE TABLE IF NOT EXISTS command_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id INTEGER,
+            guild_name TEXT,
+            channel_id INTEGER,
+            channel_name TEXT,
+            author_id INTEGER,
+            author_name TEXT,
+            command TEXT,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
 
-# Commit the changes to the database
-db_connection.commit()
+    db_connection.commit()
+except sqlite3.Error as db_error:
+    db_logger.error(f"Database table creation error: {str(db_error)}")
+    raise DatabaseError("Database table creation failed.") from db_error
 
 # Define a dictionary to cache generated responses
 response_cache = {}
 
-
-# Define a function to generate a response using ChatGPT 3.5 Turbo
+# Function to generate a response using ChatGPT 3.5 Turbo
 async def generate_response(user_message, bot_user, bot_channel):
     model_prompt = f"User: {user_message.content}\nAI: "
     cache_key = model_prompt + str(user_message.author.id)
@@ -76,18 +131,22 @@ async def generate_response(user_message, bot_user, bot_channel):
     if cache_key in response_cache:
         generated_text = response_cache[cache_key]
     else:
-        response = openai.Completion.create(
-            engine="text-davinci-003",
-            prompt=model_prompt,
-            max_tokens=100,
-            temperature=0.7,
-            n=1,
-            stop=None,
-            user=str(user_message.author.id),
-        )
-        generated_text = response.choices[0].text.strip()
+        try:
+            response = openai.Completion.create(
+                engine="text-davinci-003",
+                prompt=model_prompt,
+                max_tokens=100,
+                temperature=0.7,
+                n=1,
+                stop=None,
+                user=str(user_message.author.id),
+            )
+            generated_text = response.choices[0].text.strip()
 
-        response_cache[cache_key] = generated_text
+            response_cache[cache_key] = generated_text
+        except openai.error.OpenAIError as openai_error:
+            openai_logger.error(f"OpenAI API error: {str(openai_error)}")
+            raise OpenAIError("OpenAI API error occurred.") from openai_error
 
     bot_response = generated_text + ' AI: '
 
@@ -95,7 +154,6 @@ async def generate_response(user_message, bot_user, bot_channel):
     log_message(bot_user, bot_channel, bot_response)
 
     return bot_response
-
 
 # Function to log messages to the database and export logs to a text file
 def log_message(author, channel, content):
@@ -108,26 +166,29 @@ def log_message(author, channel, content):
 
     timestamp = datetime.now(pytz.timezone('America/Phoenix'))
 
-    db_cursor.execute(
-        '''
-        INSERT INTO channel_logs (
-            channel_id, channel_name, guild_id, guild_name,
-            author_id, author_name, content, timestamp
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        channel.id, channel.name,
-        channel.guild.id, channel.guild.name,
-        author_id, author_name,
-        content, timestamp
-    ))
+    try:
+        db_cursor.execute(
+            '''
+            INSERT INTO channel_logs (
+                channel_id, channel_name, guild_id, guild_name,
+                author_id, author_name, content, timestamp
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            channel.id, channel.name,
+            channel.guild.id, channel.guild.name,
+            author_id, author_name,
+            content, timestamp
+        ))
 
-    # Commit the changes to the database
-    db_connection.commit()
+        # Commit the changes to the database
+        db_connection.commit()
 
-    # Export logs to a text file
-    export_logs()
-
+        # Export logs to a text file
+        export_logs()
+    except sqlite3.Error as db_error:
+        db_logger.error(f"Database logging error: {str(db_error)}")
+        raise DatabaseError("Database logging failed.") from db_error
 
 # Function to export logs to a text file
 def export_logs():
@@ -163,12 +224,10 @@ def export_logs():
             file.write(f'Command: {log[7]}\n')
             file.write(f'Timestamp: {local_timestamp}\n\n')
 
-
 # Event handler for the on_message event
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
-        # Delete bot messages after 2 minutes
         await asyncio.sleep(120)
         try:
             await message.delete()
@@ -176,7 +235,6 @@ async def on_message(message):
             pass
         return
 
-    # Log message in the channel_logs table
     log_message(message.author, message.channel, message.content)
 
     if message.channel.name == "ask-anything":
@@ -210,12 +268,17 @@ async def on_message(message):
                         except discord.errors.NotFound:
                             pass
                         break
-            except openai.Error as e:
-                # Handle OpenAI API errors
-                await message.channel.send(f"OpenAI API error: {str(e)}")
+            except RateLimitError as rate_limit_error:
+                bot_logger.warning(f"Rate limit exceeded: {str(rate_limit_error)}")
+                # Implement retry logic or backoff strategies
+            except DiscordError as discord_error:
+                bot_logger.error(f"Discord error: {str(discord_error)}")
+                await message.channel.send(f"Discord error: {str(discord_error)}")
             except Exception as e:
                 # Handle other errors
-                await message.channel.send(f"An error occurred: {str(e)}")
+                error_message = f"An error occurred: {str(e)}"
+                bot_logger.error(error_message)
+                await message.channel.send(error_message)
         elif verified_role in message.author.roles:
             # User has only "Verified" role
             # Delete user message instantly
@@ -256,63 +319,60 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
-
 # Event handler for the on_command event
 @bot.event
 async def on_command(ctx):
-    # Log the command in the command logs
-    db_cursor.execute(
-        '''
-        INSERT INTO command_logs (
-            guild_id, guild_name, channel_id, channel_name,
-            author_id, author_name, command
+    try:
+        db_cursor.execute(
+            '''
+            INSERT INTO command_logs (
+                guild_id, guild_name, channel_id, channel_name,
+                author_id, author_name, command
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''',
+            (
+                ctx.guild.id, ctx.guild.name,
+                ctx.channel.id, ctx.channel.name,
+                ctx.author.id, ctx.author.name,
+                ctx.message.content,
+            ),
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''',
-        (
-            ctx.guild.id, ctx.guild.name,
-            ctx.channel.id, ctx.channel.name,
-            ctx.author.id, ctx.author.name,
-            ctx.message.content,
-        ),
-    )
 
-    # Commit the changes to the database
-    db_connection.commit()
-
+        # Commit the changes to the database
+        db_connection.commit()
+    except sqlite3.Error as db_error:
+        db_logger.error(f"Database command logging error: {str(db_error)}")
+        raise DatabaseError("Database command logging failed.") from db_error
 
 # Event handler for the on_ready event
 @bot.event
 async def on_ready():
     print(f'Bot is ready. Connected to {len(bot.guilds)} server(s).')
 
-    # Schedule the cleanup_channels function after the specified duration
     while True:
         await asyncio.sleep(cleanup_duration * 60)
         await cleanup_channels()
 
-
-# Event handler for command-related errors
+# Event handler for the on_command_error event
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
-        return  # Ignore invalid commands silently
+        return
     elif isinstance(error, commands.MissingRequiredArgument):
         await ctx.send("Missing required argument.")
-    elif isinstance(error, openai.Error):
+    elif isinstance(error, openai.error.OpenAIError):
         await ctx.send(f"OpenAI API error: {str(error)}")
     else:
         error_message = f"An error occurred: {str(error)}"
-        print(f"Error: {error_message}")
+        bot_logger.error(error_message)
         await ctx.send("An error occurred while processing the command.")
 
-
-## Cleanup function to delete all messages from non "ask-anything" text channels
+# Cleanup function to delete all messages from non "ask-anything" text channels
 async def cleanup_channels():
     for guild in bot.guilds:
         for channel in guild.text_channels:
-            if channel.name != "ask-anything":  # Skip "ask-anything" channel
-                # Start the purge process for all messages in the channel
+            if channel.name != "ask-anything":
                 async for message in channel.history(limit=None):
                     try:
                         await message.delete()
@@ -320,4 +380,9 @@ async def cleanup_channels():
                         pass
 
 # Start the bot
-bot.run(token)
+try:
+    bot.run(token)
+except Exception as e:
+    bot_logger.error(f"An error occurred during bot execution: {str(e)}")
+    db_connection.close()
+    sys.exit(1)
