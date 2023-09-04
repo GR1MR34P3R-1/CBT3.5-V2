@@ -1,5 +1,8 @@
 # ChatBotTurbo3.5-V2 🚀
 
+![Python Version](https://img.shields.io/badge/Python-3.6%2B-blue.svg)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Welcome to **ChatBotTurbo3.5-V2**, the ultimate ChatBot powered by GPT-3.5 Turbo! 🤖
 
 ## Features 🔥
