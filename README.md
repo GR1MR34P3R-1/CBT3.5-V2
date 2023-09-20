@@ -1,9 +1,28 @@
 # ChatBotTurbo3.5-V2 🚀
 
-![Python Version](https://img.shields.io/badge/Python-3.6%2B-blue.svg)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-
 Welcome to **ChatBotTurbo3.5-V2**, the ultimate ChatBot powered by GPT-3.5 Turbo! 🤖
+
+# Table of Contents
+
+1. [Introduction](#introduction)
+    1.1 [Features](#features)
+    1.2 [Requirements](#requirements)
+
+2. [Installation](#installation)
+    2.1 [Clone the Repository](#clone-the-repository)
+    2.2 [Install Required Dependencies](#install-required-dependencies)
+    2.3 [Edit Configuration](#edit-configuration)
+    2.4 [Run the Bot](#run-the-bot)
+
+3. [Usage](#usage)
+    3.1 [Setting Up the Discord Server](#setting-up-the-discord-server)
+    3.2 [Customization](#customization)
+    3.3 [Logging and Exporting](#logging-and-exporting)
+    3.4 [Error Handling and Troubleshooting](#error-handling-and-troubleshooting)
+
+4. [License](#license)
+
+5. [Have a Great Day!](#have-a-great-day)
 
 ## Features 🔥
 
@@ -30,10 +49,11 @@ Before running ChatBotTurbo3.5-V2, make sure you have the following dependencies
 
 3. Edit the config.ini file with your Discord bot token and OpenAI API key as shown below.
 
-    **[Bot]
+    `[Bot]
     token = YOUR_DISCORD_BOT_TOKEN
     api_key = YOUR_OPENAI_API_KEY
-    cleanup_duration = 60**
+    cleanup_duration = 60
+    `
 
 4. Run the bot:
 
